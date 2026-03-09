@@ -553,9 +553,21 @@ def fetch_one(ticker, period_type='year', n=1):
             if ratio is None or ratio.empty:
                 last_err = f'{src}: empty'; continue
 
-            # Sort tăng dần theo năm, lấy n kỳ mới nhất
-            ratio_sorted = ratio.iloc[::-1].reset_index(drop=True)  # đảo ngược: cũ→mới
-            rows = ratio_sorted.tail(n)  # n hàng cuối = n kỳ mới nhất
+            # Tìm cột yearReport để sort đúng
+            try:
+                year_col = None
+                for col in ratio.columns:
+                    col_str = col[1] if isinstance(col, tuple) else str(col)
+                    if 'yearreport' in col_str.lower().replace(' ',''):
+                        year_col = col; break
+                if year_col is not None:
+                    ratio = ratio.sort_values(by=year_col, ascending=True)
+                else:
+                    ratio = ratio.iloc[::-1]  # fallback: đảo ngược
+            except:
+                ratio = ratio.iloc[::-1]
+
+            rows = ratio.tail(n)  # n hàng cuối = n kỳ mới nhất
             price = None
             try:
                 pb_data = stock.trading.price_board(symbols_list=[ticker])
