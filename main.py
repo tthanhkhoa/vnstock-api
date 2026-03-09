@@ -5,18 +5,7 @@ import os
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
-SOURCES = ['TCBS', 'MSN', 'VCI']
-
-def find_val(row, keywords):
-    for col in row.index:
-        if any(k.lower() in str(col).lower() for k in keywords):
-            v = row[col]
-            try:
-                f = float(v)
-                return None if str(v) == 'nan' else f
-            except:
-                return None
-    return None
+SOURCES = ['VCI', 'TCBS', 'MSN']
 
 def fetch_one(ticker):
     try:
@@ -37,13 +26,33 @@ def fetch_one(ticker):
                 continue
 
             r = ratio.iloc[-1]
-            pe   = find_val(r, ['p/e','pe','pricetoearning','price_earning'])
-            pb   = find_val(r, ['p/b','pb','pricetobook','price_book'])
-            roe  = find_val(r, ['roe','returnonequity'])
-            bvps = find_val(r, ['bvps','bookvalue','book_value','nav'])
 
-            if roe is not None:
-                roe = round(roe * 100, 2) if roe < 1 else round(roe, 2)
+            # Debug: log tên cột thực tế (chỉ lần đầu)
+            col_list = list(r.index)
+
+            def get_val(keys):
+                for col in r.index:
+                    col_lower = str(col).lower().replace(' ', '').replace('_', '').replace('/','')
+                    for k in keys:
+                        k_norm = k.lower().replace(' ', '').replace('_', '').replace('/','')
+                        if k_norm == col_lower or k_norm in col_lower:
+                            v = r[col]
+                            try:
+                                f = float(v)
+                                return None if str(v) in ('nan','None') else f
+                            except:
+                                return None
+                return None
+
+            pe   = get_val(['pe', 'p/e', 'priceearning', 'pricetoearning', 'earningratio'])
+            pb   = get_val(['pb', 'p/b', 'pricebook', 'pricetobook', 'bookratio'])
+            roe  = get_val(['roe', 'returnonequity', 'returnequity'])
+            bvps = get_val(['bvps', 'bookvaluepershare', 'bookvalue', 'navpershare'])
+
+            if roe is not None and roe < 1:
+                roe = round(roe * 100, 2)
+            elif roe is not None:
+                roe = round(roe, 2)
 
             price = None
             try:
@@ -62,7 +71,8 @@ def fetch_one(ticker):
                 'pb':     round(pb,    2) if pb   is not None else None,
                 'roe':    roe,
                 'bvps':   round(bvps,  0) if bvps is not None else None,
-                'error':  None
+                'error':  None,
+                '_debug_cols': col_list  # tạm thời để debug
             }
         except Exception as e:
             last_err = f'{src}: {e}'
