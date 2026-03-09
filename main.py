@@ -614,7 +614,7 @@ def parse_params():
     return period_type, n
 
 def check_key():
-    """Kiểm tra ?key=xxx trong URL. Trả về None nếu hợp lệ, response lỗi nếu không."""    key = request.args.get('key', '').strip()
+    key = request.args.get('key', '').strip()
     if key not in API_KEYS.values():
         return jsonify({'error': 'Unauthorized', 'message': 'Thiếu hoặc sai key. Thêm ?key=YOUR_KEY vào URL.'}), 401
     return None
