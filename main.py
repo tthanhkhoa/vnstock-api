@@ -1,6 +1,5 @@
 """
-VNStock API Server - Render.com v5
-Tên cột VCI dạng MultiIndex: ("Chỉ tiêu định giá", "P/E")
+VNStock API Server - Render.com v6
 """
 import os
 from flask import Flask, jsonify, request
@@ -9,18 +8,17 @@ app = Flask(__name__)
 SOURCES = ['VCI', 'TCBS', 'MSN']
 
 def get_val(row, targets):
-    """Lấy giá trị từ MultiIndex hoặc flat index."""
     for col in row.index:
-        # MultiIndex: col là tuple ("nhóm", "tên")
         col_str = col[1] if isinstance(col, tuple) else str(col)
-        col_norm = col_str.lower().replace(' ','').replace('_','').replace('/','')
+        col_norm = col_str.lower().replace(' ','').replace('_','').replace('/','').replace('(','').replace(')','')
         for t in targets:
-            t_norm = t.lower().replace(' ','').replace('_','').replace('/','')
+            t_norm = t.lower().replace(' ','').replace('_','').replace('/','').replace('(','').replace(')','')
             if t_norm == col_norm or col_norm.startswith(t_norm):
                 v = row[col]
                 try:
                     f = float(v)
-                    return None if str(v) in ('nan','None','') else f
+                    # Trả về None nếu là 0 hoặc nan — 0 thường là missing data
+                    return None if (str(v) in ('nan','None','') or f == 0.0) else f
                 except:
                     return None
     return None
@@ -37,23 +35,43 @@ def fetch_one(ticker):
     for src in SOURCES:
         try:
             stock = Vnstock().stock(symbol=ticker, source=src)
-            ratio = stock.finance.ratio(period='quarter', lang='en', dropna=True)
+
+            # Thử yearly nếu quarterly không có data
+            ratio = None
+            for period in ['quarter', 'year']:
+                r = stock.finance.ratio(period=period, lang='en', dropna=True)
+                if r is not None and not r.empty:
+                    # Kiểm tra có data thực không (không phải toàn 0)
+                    ratio = r
+                    break
+
             if ratio is None or ratio.empty:
                 last_err = f'{src}: empty ratio'; continue
 
-            r = ratio.iloc[-1]
+            row = ratio.iloc[-1]
 
-            # Tên cột VCI đã xác nhận:
-            # ("Chỉ tiêu định giá", "P/E")
-            # ("Chỉ tiêu định giá", "P/B")
-            # ("Chỉ tiêu định giá", "BVPS (VND)")
-            # ("Chỉ tiêu khả năng sinh lợi", "ROE (%)")
-            pe   = get_val(r, ['P/E'])
-            pb   = get_val(r, ['P/B'])
-            roe  = get_val(r, ['ROE(%)','ROE %','ROE'])
-            bvps = get_val(r, ['BVPS(VND)','BVPS'])
+            pe   = get_val(row, ['P/E'])
+            pb   = get_val(row, ['P/B'])
+            roe  = get_val(row, ['ROE(%)','ROE%','ROE'])
+            bvps = get_val(row, ['BVPS(VND)','BVPS'])
 
-            # ROE từ VCI đã là %, không cần nhân 100
+            # Nếu vẫn thiếu → thử lấy từ các dòng gần đây hơn
+            if pe is None and pb is None:
+                for i in range(2, min(6, len(ratio))):
+                    row2 = ratio.iloc[-i]
+                    pe2   = get_val(row2, ['P/E'])
+                    pb2   = get_val(row2, ['P/B'])
+                    roe2  = get_val(row2, ['ROE(%)','ROE%','ROE'])
+                    bvps2 = get_val(row2, ['BVPS(VND)','BVPS'])
+                    if pe2 or pb2:
+                        pe, pb, roe, bvps = pe2, pb2, roe2, bvps2
+                        break
+
+            # Nếu source này không có đủ chỉ số → thử source kế tiếp
+            if pe is None and pb is None and roe is None:
+                last_err = f'{src}: all ratios null/zero'
+                continue
+
             if roe is not None:
                 roe = round(roe, 2)
 
@@ -63,8 +81,10 @@ def fetch_one(ticker):
                 for col in pb_data.columns:
                     col_str = col[1] if isinstance(col, tuple) else str(col)
                     if any(k in col_str.lower() for k in ['close','match','price','gia']):
-                        price = float(pb_data.iloc[0][col])
-                        break
+                        v = float(pb_data.iloc[0][col])
+                        if v > 0:
+                            price = v
+                            break
             except:
                 pass
 
@@ -87,7 +107,7 @@ def fetch_one(ticker):
 @app.route('/')
 def index():
     return jsonify({'status': 'ok',
-                    'endpoints': ['/health', '/stock?ticker=ACB', '/stocks?tickers=ACB,FPT,HPG']})
+                    'endpoints': ['/health', '/stock?ticker=ACB', '/stocks?tickers=ACB,FPT,HPG', '/debug?ticker=ACB']})
 
 @app.route('/health')
 def health():
@@ -107,6 +127,34 @@ def get_stocks():
     if not tickers:
         return jsonify({'error': 'Missing tickers param'}), 400
     return jsonify({'data': [fetch_one(t) for t in tickers], 'count': len(tickers)})
+
+@app.route('/debug')
+def debug():
+    """Xem raw ratio data để kiểm tra tên cột và giá trị thực."""
+    ticker = request.args.get('ticker', 'ACB').strip().upper()
+    src    = request.args.get('source', 'VCI').strip().upper()
+    period = request.args.get('period', 'quarter')
+    try:
+        from vnstock import Vnstock
+        stock = Vnstock().stock(symbol=ticker, source=src)
+        ratio = stock.finance.ratio(period=period, lang='en', dropna=True)
+        if ratio is None or ratio.empty:
+            return jsonify({'error': 'empty', 'ticker': ticker, 'source': src})
+
+        # Trả về 3 dòng gần nhất + tên cột
+        rows = ratio.tail(3).to_dict(orient='records')
+        # Convert tuple keys thành string
+        rows_clean = []
+        for r in rows:
+            rows_clean.append({str(k): v for k, v in r.items()})
+
+        return jsonify({
+            'ticker': ticker, 'source': src, 'period': period,
+            'columns': [str(c) for c in ratio.columns.tolist()],
+            'latest_3_rows': rows_clean
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'ticker': ticker, 'source': src})
 
 
 if __name__ == '__main__':
