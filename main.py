@@ -553,7 +553,9 @@ def fetch_one(ticker, period_type='year', n=1):
             if ratio is None or ratio.empty:
                 last_err = f'{src}: empty'; continue
 
-            rows = ratio.tail(n)
+            # Sort tăng dần theo năm, lấy n kỳ mới nhất
+            ratio_sorted = ratio.iloc[::-1].reset_index(drop=True)  # đảo ngược: cũ→mới
+            rows = ratio_sorted.tail(n)  # n hàng cuối = n kỳ mới nhất
             price = None
             try:
                 pb_data = stock.trading.price_board(symbols_list=[ticker])
