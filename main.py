@@ -536,6 +536,22 @@ def parse_row(r, src):
         'bvps': round(bvps, 0) if bvps is not None else None,
     }
 
+def sort_ratio(ratio):
+    """Sort DataFrame cũ→mới an toàn với MultiIndex columns."""
+    try:
+        # Flatten columns để tìm yearReport
+        flat_cols = [col[1] if isinstance(col, tuple) else str(col) for col in ratio.columns]
+        year_idx  = next((i for i, c in enumerate(flat_cols)
+                          if 'yearreport' in c.lower().replace(' ','')), None)
+        if year_idx is not None:
+            year_values = ratio.iloc[:, year_idx].astype(float)
+            ratio = ratio.iloc[year_values.argsort().values]  # sort by position
+        else:
+            ratio = ratio.iloc[::-1]
+    except:
+        ratio = ratio.iloc[::-1]
+    return ratio
+
 def fetch_one(ticker, period_type='year', n=1):
     try:
         from vnstock import Vnstock
@@ -548,26 +564,14 @@ def fetch_one(ticker, period_type='year', n=1):
             stock = Vnstock().stock(symbol=ticker, source=src)
             ratio = stock.finance.ratio(period=period_type, lang='en', dropna=True)
             if ratio is None or ratio.empty:
-                alt = 'quarter' if period_type == 'year' else 'year'
+                alt   = 'quarter' if period_type == 'year' else 'year'
                 ratio = stock.finance.ratio(period=alt, lang='en', dropna=True)
             if ratio is None or ratio.empty:
                 last_err = f'{src}: empty'; continue
 
-            # Tìm cột yearReport để sort đúng
-            try:
-                year_col = None
-                for col in ratio.columns:
-                    col_str = col[1] if isinstance(col, tuple) else str(col)
-                    if 'yearreport' in col_str.lower().replace(' ',''):
-                        year_col = col; break
-                if year_col is not None:
-                    ratio = ratio.sort_values(by=year_col, ascending=True)
-                else:
-                    ratio = ratio.iloc[::-1]  # fallback: đảo ngược
-            except:
-                ratio = ratio.iloc[::-1]
+            ratio = sort_ratio(ratio)
+            rows  = ratio.tail(n)  # n hàng cuối = n kỳ mới nhất
 
-            rows = ratio.tail(n)  # n hàng cuối = n kỳ mới nhất
             price = None
             try:
                 pb_data = stock.trading.price_board(symbols_list=[ticker])
