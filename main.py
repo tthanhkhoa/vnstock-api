@@ -9,6 +9,15 @@ from flask import Flask, jsonify, request, render_template_string
 app = Flask(__name__)
 SOURCES = ['VCI', 'TCBS', 'MSN']
 
+# ── Access control ────────────────────────────────────────
+# Thêm key vào đây để cấp quyền truy cập
+API_KEYS = {
+    'owner': 'vns2025secret',   # ✏️ key của bạn — đổi tuỳ ý
+}
+
+# vnstock license key để tăng rate limit
+VNSTOCK_KEY = 'vnstock_72b5a8cf6d7cabe1e3242de34028ed1c'
+
 # ── HTML DOCS ─────────────────────────────────────────────
 DOCS_HTML = """
 <!DOCTYPE html>
@@ -561,7 +570,7 @@ def fetch_one(ticker, period_type='year', n=1):
     last_err = ''
     for src in SOURCES:
         try:
-            stock = Vnstock().stock(symbol=ticker, source=src)
+            stock = Vnstock(license_key=VNSTOCK_KEY).stock(symbol=ticker, source=src)
             ratio = stock.finance.ratio(period=period_type, lang='en', dropna=True)
             if ratio is None or ratio.empty:
                 alt   = 'quarter' if period_type == 'year' else 'year'
@@ -604,6 +613,12 @@ def parse_params():
     except: n = 1
     return period_type, n
 
+def check_key():
+    """Kiểm tra ?key=xxx trong URL. Trả về None nếu hợp lệ, response lỗi nếu không."""    key = request.args.get('key', '').strip()
+    if key not in API_KEYS.values():
+        return jsonify({'error': 'Unauthorized', 'message': 'Thiếu hoặc sai key. Thêm ?key=YOUR_KEY vào URL.'}), 401
+    return None
+
 # ── Routes ────────────────────────────────────────────────
 @app.route('/docs')
 def docs():
@@ -620,6 +635,8 @@ def health():
 
 @app.route('/stock')
 def get_stock():
+    err = check_key()
+    if err: return err
     ticker = request.args.get('ticker', '').strip().upper()
     if not ticker: return jsonify({'error': 'Missing ticker param'}), 400
     period_type, n = parse_params()
@@ -627,6 +644,8 @@ def get_stock():
 
 @app.route('/stocks')
 def get_stocks():
+    err = check_key()
+    if err: return err
     raw = request.args.get('tickers', '')
     tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
     if not tickers: return jsonify({'error': 'Missing tickers param'}), 400
